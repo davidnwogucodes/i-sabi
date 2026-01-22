@@ -325,7 +325,7 @@ const handleCallbackQuery = async (callbackQuery) => {
       case 'reg_service_landscaping':
       case 'reg_service_other':
         const regServiceType = data.replace('reg_service_', '');
-        await handleArtisanServiceSelection(chatId, user, regServiceType);
+        await handleRegistrationServiceType(chatId, user, regServiceType);
         break;
 
       // Urgency level selections
@@ -669,28 +669,29 @@ const showArtisanAvailability = async (chatId, user) => {
  * Handle registration service type selection
  */
 const handleRegistrationServiceType = async (chatId, user, serviceType) => {
-  const session = userSessions.get(chatId);
-  if (!session || session.flow !== 'artisan_registration') {
-    await bot.sendMessage(chatId, 'Registration session expired. Please start again with /start');
-    return;
-  }
+  try {
+    const session = userSessions.get(chatId);
+    if (!session || session.flow !== 'artisan_registration') {
+      await bot.sendMessage(chatId, 'Registration session expired. Please start again with /start');
+      return;
+    }
 
-  // Store service type
-  session.data.businessInfo.serviceTypes = [serviceType];
-  session.step = 'years_experience';
+    // Store service type
+    session.data.businessInfo.serviceTypes = [serviceType];
+    session.step = 'years_experience';
 
-  const serviceNames = {
-    plumbing: 'Plumbing',
-    electrical: 'Electrical',
-    carpentry: 'Carpentry',
-    cleaning: 'Cleaning',
-    painting: 'Painting',
-    hvac: 'HVAC',
-    landscaping: 'Landscaping',
-    other: 'Other Services'
-  };
+    const serviceNames = {
+      plumbing: 'Plumbing',
+      electrical: 'Electrical',
+      carpentry: 'Carpentry',
+      cleaning: 'Cleaning',
+      painting: 'Painting',
+      hvac: 'HVAC',
+      landscaping: 'Landscaping',
+      other: 'Other Services'
+    };
 
-  const message = `Great! You selected **${serviceNames[serviceType]}**. ✅
+    const message = `Great! You selected **${serviceNames[serviceType]}**. ✅
 
 **Step 2 of 8: Experience Level**
 
@@ -698,7 +699,12 @@ How many years of professional experience do you have in ${serviceNames[serviceT
 
 Please type a number (e.g., 5 for 5 years):`;
 
-  await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    
+  } catch (error) {
+    logger.error('Error in handleRegistrationServiceType:', error);
+    await bot.sendMessage(chatId, `❌ Error: ${error.message}. Please try again or use /start to restart.`);
+  }
 };
 
 /**
@@ -946,6 +952,16 @@ const handleLocationInput = async (chatId, user, text, session) => {
  */
 const completeArtisanRegistration = async (chatId, user, session) => {
   try {
+    // Ensure all required fields are set
+    if (!session.data.personalInfo.lastName) {
+      session.data.personalInfo.lastName = session.data.personalInfo.firstName; // Use first name as fallback
+    }
+    
+    if (!session.data.personalInfo.phone) {
+      await bot.sendMessage(chatId, '❌ Phone number is required. Please restart registration.');
+      return;
+    }
+
     // Add bank details placeholder (will be collected later)
     session.data.bankDetails = {
       accountName: `${session.data.personalInfo.firstName} ${session.data.personalInfo.lastName}`,
@@ -953,6 +969,21 @@ const completeArtisanRegistration = async (chatId, user, session) => {
       bankName: 'PENDING',
       routingCode: ''
     };
+
+    // Ensure location has required fields
+    if (!session.data.location.latitude || !session.data.location.longitude) {
+      session.data.location.latitude = 6.5244; // Default Lagos coordinates
+      session.data.location.longitude = 3.3792;
+    }
+
+    logger.info('Attempting to register artisan:', {
+      telegramId: session.data.telegramId,
+      firstName: session.data.personalInfo.firstName,
+      lastName: session.data.personalInfo.lastName,
+      phone: session.data.personalInfo.phone,
+      serviceTypes: session.data.businessInfo.serviceTypes,
+      yearsExperience: session.data.businessInfo.yearsExperience
+    });
 
     // Register the artisan
     const artisan = await artisanService.registerArtisan(session.data);
@@ -1000,8 +1031,10 @@ Welcome to the Artisan Marketplace, ${artisan.fullName}!
     
     if (error.message.includes('already registered')) {
       await bot.sendMessage(chatId, '❌ You are already registered as an artisan. Use /start to access your dashboard.');
+    } else if (error.message.includes('validation')) {
+      await bot.sendMessage(chatId, `❌ Registration validation error: ${error.message}. Please contact support.`);
     } else {
-      await bot.sendMessage(chatId, '❌ Registration failed. Please try again later or contact support.');
+      await bot.sendMessage(chatId, `❌ Registration failed: ${error.message}. Please try again later or contact support.`);
     }
     
     userSessions.delete(chatId);
